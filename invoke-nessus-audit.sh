@@ -194,11 +194,14 @@ test_value() {
     Equals) [ "$tv_actual" = "$tv_expected" ] ;;
     NotEqual) [ "$tv_actual" != "$tv_expected" ] ;;
     Range)
-      n=$(number_from_text "$tv_actual")
-      min=$(printf '%s' "$tv_expected" | sed -n 's/^\[\{0,1\}\([0-9][0-9]*\|MIN\)\.\.\([0-9][0-9]*\|MAX\)\]\{0,1\}$/\1/p')
-      max=$(printf '%s' "$tv_expected" | sed -n 's/^\[\{0,1\}\([0-9][0-9]*\|MIN\)\.\.\([0-9][0-9]*\|MAX\)\]\{0,1\}$/\2/p')
-      [ -n "$n" ] || return 1
-      { [ "$min" = "MIN" ] || [ "$n" -ge "$min" ]; } && { [ "$max" = "MAX" ] || [ "$n" -le "$max" ]; }
+      tv_n=$(number_from_text "$tv_actual")
+      tv_range=$(printf '%s' "$tv_expected" | tr -d ' \t\r\n')
+      tv_min=$(printf '%s' "$tv_range" | sed -n -E 's/^\[?(-?[0-9]+|MIN)\.\.(-?[0-9]+|MAX)\]?$/\1/p')
+      tv_max=$(printf '%s' "$tv_range" | sed -n -E 's/^\[?(-?[0-9]+|MIN)\.\.(-?[0-9]+|MAX)\]?$/\2/p')
+      [ -n "$tv_n" ] || return 1
+      [ -n "$tv_min" ] || return 1
+      [ -n "$tv_max" ] || return 1
+      { [ "$tv_min" = "MIN" ] || [ "$tv_n" -ge "$tv_min" ]; } && { [ "$tv_max" = "MAX" ] || [ "$tv_n" -le "$tv_max" ]; }
       ;;
     *) [ "$tv_actual" = "$tv_expected" ] ;;
   esac
@@ -222,6 +225,9 @@ test_value() {
         elif [ ! -f "$target" ]; then
           actual="Missing"
           status="Fail"
+        elif ! command -v grep >/dev/null 2>&1; then
+          actual="grep not found"
+          status="Manual"
         else
           actual=$(grep -E "$expected" "$target" 2>/dev/null | head -n 5)
           [ -n "$actual" ] || actual="<no matching lines>"
@@ -244,6 +250,9 @@ test_value() {
         if [ "$allow_command_exec" -ne 1 ]; then
           actual="Embedded command was not executed. Re-run with --allow-command-exec if this audit file is trusted."
           status="Manual"
+        elif ! command -v grep >/dev/null 2>&1; then
+          actual="grep not found"
+          status="Manual"
         else
           actual=$(sh -c "$target" 2>&1)
           if test_value "$actual" "$op" "$expected"; then status="Pass"; else status="Fail"; fi
@@ -260,7 +269,8 @@ test_value() {
         fi
         ;;
       Process)
-        if pgrep -f "$target" >/dev/null 2>&1; then actual="Running"; status="Pass"; else actual="Not running"; status="Fail"; fi
+        if ! command -v pgrep >/dev/null 2>&1; then actual="pgrep not found"; status="Manual"
+        elif pgrep -f "$target" >/dev/null 2>&1; then actual="Running"; status="Pass"; else actual="Not running"; status="Fail"; fi
         ;;
       Service)
         if command -v systemctl >/dev/null 2>&1; then

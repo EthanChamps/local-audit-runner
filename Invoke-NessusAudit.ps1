@@ -167,7 +167,7 @@ function ConvertTo-AuditOperator {
         'CHECK_NOT_REGEX' { return [pscustomobject]@{ Operator = 'NotRegex'; Expected = $expected; ExpectedData = $expected } }
         'CHECK_NOT_EQUAL' { return [pscustomobject]@{ Operator = 'NotEqual'; Expected = $expected; ExpectedData = $expected } }
     }
-    if ($expected -match '^\[(MIN|\d+)\.\.(MAX|\d+)\]$') {
+    if ($expected -match '^\[\s*(MIN|\d+)\s*\.\.\s*(MAX|\d+)\s*\]$') {
         return [pscustomobject]@{ Operator = 'Range'; Expected = $expected; ExpectedData = '' }
     }
     if ($ValueData -match '\|\|') {
@@ -267,8 +267,8 @@ function Convert-AuditFieldsToCheck {
         return New-AuditCheckRow -Id $id -Title $title -Method 'Registry' -Target $targetText -Operator $op.Operator -Expected $op.Expected -ExpectedData $op.ExpectedData -TargetsJson (ConvertTo-CsvSafeJson @($target)) -ValueType $valueType -SourceType $sourceType -RegOption $regOption -CheckType $checkType
     }
 
-    if ($sourceType -in @('PASSWORD_POLICY', 'LOCKOUT_POLICY')) {
-        $policyName = (Get-AuditField -Fields $Fields -Name 'password_policy') + (Get-AuditField -Fields $Fields -Name 'lockout_policy')
+    if ($sourceType -in @('PASSWORD_POLICY', 'LOCKOUT_POLICY', 'KERBEROS_POLICY')) {
+        $policyName = (Get-AuditField -Fields $Fields -Name 'password_policy') + (Get-AuditField -Fields $Fields -Name 'lockout_policy') + (Get-AuditField -Fields $Fields -Name 'kerberos_policy')
         $policyTarget = switch ($policyName) {
             'ENFORCE_PASSWORD_HISTORY' { 'PasswordHistorySize' }
             'MAXIMUM_PASSWORD_AGE' { 'MaximumPasswordAge' }
@@ -280,6 +280,12 @@ function Convert-AuditFieldsToCheck {
             'LOCKOUT_DURATION' { 'LockoutDuration' }
             'LOCKOUT_THRESHOLD' { 'LockoutBadCount' }
             'RESET_LOCKOUT_COUNTER' { 'ResetLockoutCount' }
+            'TicketValidateClient' { 'TicketValidateClient' }
+            'MaxServiceAge' { 'MaxServiceAge' }
+            'MaxTicketAge' { 'MaxTicketAge' }
+            'MaxRenewAge' { 'MaxRenewAge' }
+            'MaxClockSkew' { 'MaxClockSkew' }
+            'ForceLogoffWhenHourExpire' { 'ForceLogoffWhenHourExpire' }
             default { '' }
         }
         if (-not [string]::IsNullOrWhiteSpace($policyTarget)) {
@@ -674,10 +680,13 @@ function Test-RangeExpression {
     if ($null -eq $actualNumber) { return $false }
 
     $range = $Expected.Trim()
-    if ($range -match '^\[(MIN|\d+)\.\.(MAX|\d+)\]$') {
+    # -match is case-insensitive, so MIN/MAX match in any case. Whitespace
+    # around the brackets, bounds, and '..' is tolerated; anything else falls
+    # through to $false so unparseable ranges fail safe (never pass).
+    if ($range -match '^\[\s*(MIN|\d+)\s*\.\.\s*(MAX|\d+)\s*\]$') {
         $minText = $Matches[1]
         $maxText = $Matches[2]
-    } elseif ($range -match '^(MIN|\d+)\.\.(MAX|\d+)$') {
+    } elseif ($range -match '^(MIN|\d+)\s*\.\.\s*(MAX|\d+)\s*$') {
         $minText = $Matches[1]
         $maxText = $Matches[2]
     } else {
@@ -931,6 +940,49 @@ function Get-AuditPolicy {
     return $script:AuditPolicy
 }
 
+function ConvertTo-CanonicalPrincipal {
+    # Canonicalize one principal to a comparable key. Well-known friendly
+    # names map to their SID; well-formed SIDs are kept as-is; anything else
+    # is compared literally (lowercased, trimmed, namespace-stripped). An
+    # empty Key means the value could not be resolved (unknown friendly name
+    # or malformed SID-like text); callers must treat unresolvable entries as
+    # Manual, never as a pass. Empty input resolves to an empty key without
+    # flagging, so 'No One' checks keep working.
+    param([string]$Value)
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        return [pscustomobject]@{ Key = ''; Resolved = $true }
+    }
+    $name = ([string]$Value).Trim().ToLowerInvariant() -replace '^\*', ''
+    $name = $name -replace '^(builtin|nt authority|nt service|restricted services|nt virtual machine)\s*\\', ''
+    $name = $name.Trim()
+    if ($name -match '^s-\d+(-\d+)+$') {
+        return [pscustomobject]@{ Key = $name; Resolved = $true }
+    }
+    if ($name -like 's-*') {
+        return [pscustomobject]@{ Key = ''; Resolved = $false }
+    }
+    switch ($name) {
+        'administrators' { return [pscustomobject]@{ Key = 's-1-5-32-544'; Resolved = $true } }
+        'users' { return [pscustomobject]@{ Key = 's-1-5-32-545'; Resolved = $true } }
+        'guests' { return [pscustomobject]@{ Key = 's-1-5-32-546'; Resolved = $true } }
+        'power users' { return [pscustomobject]@{ Key = 's-1-5-32-547'; Resolved = $true } }
+        'backup operators' { return [pscustomobject]@{ Key = 's-1-5-32-551'; Resolved = $true } }
+        'replicator' { return [pscustomobject]@{ Key = 's-1-5-32-552'; Resolved = $true } }
+        'remote desktop users' { return [pscustomobject]@{ Key = 's-1-5-32-555'; Resolved = $true } }
+        'remote management users' { return [pscustomobject]@{ Key = 's-1-5-32-580'; Resolved = $true } }
+        'everyone' { return [pscustomobject]@{ Key = 's-1-1-0'; Resolved = $true } }
+        'system' { return [pscustomobject]@{ Key = 's-1-5-18'; Resolved = $true } }
+        'local system' { return [pscustomobject]@{ Key = 's-1-5-18'; Resolved = $true } }
+        'local service' { return [pscustomobject]@{ Key = 's-1-5-19'; Resolved = $true } }
+        'network service' { return [pscustomobject]@{ Key = 's-1-5-20'; Resolved = $true } }
+        'service' { return [pscustomobject]@{ Key = 's-1-5-6'; Resolved = $true } }
+        'authenticated users' { return [pscustomobject]@{ Key = 's-1-5-11'; Resolved = $true } }
+        'interactive' { return [pscustomobject]@{ Key = 's-1-5-4'; Resolved = $true } }
+        'virtual machines' { return [pscustomobject]@{ Key = 's-1-5-83-0'; Resolved = $true } }
+        default { return [pscustomobject]@{ Key = $name; Resolved = $false } }
+    }
+}
+
 function Test-PrincipalAlternatives {
     param(
         [string]$ActualRaw,
@@ -939,13 +991,24 @@ function Test-PrincipalAlternatives {
     )
 
     $actual = @()
+    $sawUnresolved = $false
     if (-not [string]::IsNullOrWhiteSpace($ActualRaw)) {
-        $actual = @($ActualRaw -split ',' | ForEach-Object { Normalize-Principal $_ } | Where-Object { $_ })
+        foreach ($entry in ($ActualRaw -split ',')) {
+            $canon = ConvertTo-CanonicalPrincipal $entry
+            if ($canon.Key -ne '') { $actual += $canon.Key }
+            if (-not $canon.Resolved) { $sawUnresolved = $true }
+        }
     }
 
     $alternatives = ConvertFrom-EncodedAlternatives $EncodedAlternatives
     foreach ($alternative in $alternatives) {
-        $expected = @($alternative.Items | ForEach-Object { Normalize-Principal $_ } | Where-Object { $_ })
+        $expected = @()
+        $alternativeUnresolved = $false
+        foreach ($item in $alternative.Items) {
+            $canon = ConvertTo-CanonicalPrincipal $item
+            if ($canon.Key -ne '') { $expected += $canon.Key }
+            if (-not $canon.Resolved) { $alternativeUnresolved = $true }
+        }
         $matched = $true
         foreach ($item in $expected) {
             if ($actual -notcontains $item) {
@@ -959,6 +1022,15 @@ function Test-PrincipalAlternatives {
         if ($matched) {
             return $true
         }
+        if ($alternativeUnresolved) {
+            $sawUnresolved = $true
+        }
+    }
+    # A decisive match passes; a decisive mismatch fails. Anything that could
+    # not be resolved stays Manual ($null) instead of failing open or closed
+    # on a naming guess.
+    if ($sawUnresolved) {
+        return $null
     }
     return $false
 }
@@ -987,8 +1059,14 @@ function Test-RegistryTargetValue {
         return [pscustomobject]@{ Actual = $actualPart; Pass = (-not $found) }
     }
 
+    # Only CAN_BE_NULL may pass on a missing value. Any other collection
+    # failure or missing key is unknown, not a failure: surface Manual
+    # (Pass = $null) rather than guessing Fail.
     if (-not $found) {
-        return [pscustomobject]@{ Actual = $actualPart; Pass = ($regOption -eq 'CAN_BE_NULL') }
+        if ($regOption -eq 'CAN_BE_NULL') {
+            return [pscustomobject]@{ Actual = $actualPart; Pass = $true }
+        }
+        return [pscustomobject]@{ Actual = $actualPart; Pass = $null }
     }
 
     $expected = [string](Get-ObjectPropertyValue -Object $Target -Name 'Expected')
@@ -1003,6 +1081,7 @@ function Test-RegistryCheck {
     $targets = $Check.TargetsJson | ConvertFrom-Json
     $actualParts = New-Object System.Collections.Generic.List[string]
     $allPass = $true
+    $sawManual = $false
 
     foreach ($target in @($targets)) {
         $guidRegKey = Get-ObjectPropertyValue -Object $target -Name 'GuidRegKey'
@@ -1018,7 +1097,11 @@ function Test-RegistryCheck {
                 }
             }
             if ($candidateResults.Count -eq 0 -or -not ($candidateResults | Where-Object { $_.Pass })) {
-                $allPass = $false
+                if ($candidateResults | Where-Object { $null -eq $_.Pass }) {
+                    $sawManual = $true
+                } else {
+                    $allPass = $false
+                }
             }
             continue
         }
@@ -1026,15 +1109,18 @@ function Test-RegistryCheck {
         foreach ($expandedPath in (Expand-RegistryTargetPath $target.Path)) {
             $result = Test-RegistryTargetValue -Path $expandedPath -Target $target
             $actualParts.Add($result.Actual)
-            if (-not $result.Pass) {
+            if ($null -eq $result.Pass) {
+                $sawManual = $true
+            } elseif (-not $result.Pass) {
                 $allPass = $false
             }
         }
     }
 
+    $overall = if (-not $allPass) { $false } elseif ($sawManual) { $null } else { $true }
     return [pscustomobject]@{
         Actual = ($actualParts -join ' | ')
-        Pass = $allPass
+        Pass = $overall
     }
 }
 
@@ -1056,11 +1142,22 @@ function Test-UserRightCheck {
 }
 
 function ConvertTo-AuditSettingTokens {
+    # Split an inclusion setting such as 'Success and Failure', 'Success,
+    # Failure', or 'Success,Failure' into canonical tokens. Matching is
+    # case-insensitive and ignores surrounding whitespace. Unknown tokens are
+    # kept literal so they mismatch downstream (Fail, which is safe) instead
+    # of being silently dropped (which could pass incorrectly).
     param([string]$Value)
+    if ([string]::IsNullOrWhiteSpace($Value)) { return @() }
     $tokens = @()
-    if ($Value -match 'Success') { $tokens += 'Success' }
-    if ($Value -match 'Failure') { $tokens += 'Failure' }
-    return @($tokens)
+    foreach ($part in ([string]$Value -split '\s*,\s*|\s+and\s+')) {
+        $clean = $part.Trim()
+        if ($clean -eq '') { continue }
+        if ($clean -ieq 'success') { $tokens += 'Success' }
+        elseif ($clean -ieq 'failure') { $tokens += 'Failure' }
+        else { $tokens += $clean }
+    }
+    return @($tokens | Select-Object -Unique)
 }
 
 function Test-AuditPolicyCheck {
@@ -1164,6 +1261,18 @@ function Test-PowerShellCheck {
     return [pscustomobject]@{ Actual = $actual; Pass = $pass }
 }
 
+function Test-ChecklistExcluded {
+    # Catalog-only opt-out (Windows checks catalogs): a 'Checklist' column
+    # value of exactly '0' excludes the row from evaluation. Uses ordinal
+    # string comparison so values like '00' or '0.0' still evaluate normally.
+    # Missing/empty/any other value evaluates normally. Audit-file rows never
+    # carry Checklist, so the .audit path is unaffected.
+    param($Check)
+    $value = [string](Get-ObjectPropertyValue -Object $Check -Name 'Checklist')
+    if ([string]::IsNullOrWhiteSpace($value)) { return $false }
+    return [string]::Equals($value.Trim(), '0', [System.StringComparison]::Ordinal)
+}
+
 function Invoke-NessusCheck {
     param($Check)
     switch ($Check.Method) {
@@ -1189,6 +1298,19 @@ if ([string]::IsNullOrWhiteSpace($AuditPath) -and [string]::IsNullOrWhiteSpace($
     throw 'Specify either -AuditPath for a Nessus .audit file or -ChecksPath for a checks catalog CSV.'
 }
 
+# Preflight (read-only, no network): warn once per missing host tool so the
+# operator knows which checks will fall back to Manual. Informational only:
+# exit code and per-check try/catch semantics are unchanged.
+$preflightTools = @(
+    [pscustomobject]@{ Name = 'secedit.exe'; Area = 'account-policy and user-right checks' }
+    [pscustomobject]@{ Name = 'auditpol.exe'; Area = 'advanced audit-policy checks' }
+)
+foreach ($preflightTool in $preflightTools) {
+    if (-not (Get-Command $preflightTool.Name -ErrorAction SilentlyContinue)) {
+        Write-Warning ("{0} was not found on PATH; {1} will report Manual." -f $preflightTool.Name, $preflightTool.Area)
+    }
+}
+
 if (-not [string]::IsNullOrWhiteSpace($AuditPath)) {
     $checks = ConvertFrom-NessusAuditFile -Path $AuditPath
     $inputBaseName = [System.IO.Path]::GetFileNameWithoutExtension($AuditPath)
@@ -1210,6 +1332,18 @@ if ([string]::IsNullOrWhiteSpace($OutputPath)) {
 
 $results = foreach ($check in $checks) {
     $checkName = "{0} {1}" -f $check.Id, $check.Title
+
+    # Catalog opt-out: keep the row but skip evaluation entirely.
+    if (Test-ChecklistExcluded $check) {
+        [pscustomobject]@{
+            'CHECK' = $checkName
+            'Actual Value' = 'Excluded by catalog (Checklist=0).'
+            'Expected Value' = $check.Expected
+            'Pass/Fail/Manual' = 'Manual'
+        }
+        continue
+    }
+
     $manualReason = [string](Get-ObjectPropertyValue -Object $check -Name 'ManualReason')
 
     if ($check.Method -eq 'Manual') {
