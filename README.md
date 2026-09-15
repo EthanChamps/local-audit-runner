@@ -1,10 +1,10 @@
-# Local Audit Runner
+# AuditRunner
 
 **Local configuration audits. Clear evidence. CSV results.**
 
 Run supported checks from Nessus `.audit` files directly on the machine you are assessing. Compare actual settings with expected values and export a straightforward **Pass / Fail / Manual** report for review.
 
-A Windows PowerShell runner and a Linux/Unix shell runner share a simple reporting format. The checks come from the audit file you supply. Originally published as `win11-check`.
+A Windows PowerShell runner and a Linux/Unix shell runner share a simple reporting format. The checks come from the audit file you supply. Originally published as `win11-check`. The runners were previously named `Invoke-NessusAudit.ps1` / `invoke-nessus-audit.sh` (plus `Invoke-CISWindows11Audit.ps1` / `Invoke-AuditCli.ps1`) and have been renamed to AuditRunner.
 
 ![Windows: PowerShell](https://img.shields.io/badge/Windows-PowerShell-0078D4)
 ![Linux / Unix: Shell](https://img.shields.io/badge/Linux_%2F_Unix-Shell-475569)
@@ -47,7 +47,7 @@ cd local-audit-runner
 Use Windows PowerShell on the machine being assessed. Run an elevated session when reading protected security or audit policies; insufficient access can result in `Manual` rows with error details.
 
 ```powershell
-.\Invoke-NessusAudit.ps1 -AuditPath C:\Audits\benchmark.audit -OutputPath .\results.csv
+.\Invoke-AuditRunner.ps1 -AuditPath C:\Audits\benchmark.audit -OutputPath .\results.csv
 ```
 
 Open `results.csv` in Excel or another CSV viewer. The output folder must already exist. Without `-OutputPath`, results are written beside the PowerShell script as `<input>_results_<timestamp>.csv`.
@@ -59,7 +59,7 @@ The runner uses Windows facilities such as the registry, `secedit.exe` and `audi
 Use a Unix shell with `awk`, `grep`, `sed`, `tr` and standard system utilities. Individual checks also depend on host tools such as the package manager, `pgrep` or `systemctl`.
 
 ```sh
-sh ./invoke-nessus-audit.sh /path/to/benchmark.audit -o ./results.csv
+sh ./audit-runner.sh /path/to/benchmark.audit -o ./results.csv
 ```
 
 Without `-o`, results are written in the current directory as `<input>_results_<timestamp>.csv`. Available checks depend on the operating system, installed tools and the permissions of the account running the script.
@@ -112,28 +112,42 @@ Successful script completion means results were exported. Inspect the CSV to det
 | `-OutputPath` | Set the results CSV path. |
 | `-ExportChecksPath` | Save the parsed catalog before running the checks. This is not a parse-only mode. |
 | `-AllowEmbeddedScripts` | Allow embedded PowerShell from a trusted input. |
+| `-HtmlPath` | Also write a self-contained offline HTML report (no network, no external files). Missing parent folders are created. |
+| `-CompanyName`, `-ClientName`, `-AssessorName`, `-ReportTitle` | White-label text for the HTML report header. |
+| `-LogoPath` | Local logo file (png/jpg/gif/svg) embedded in the HTML report as a data URI; text header is used when omitted. |
 
 Supply either `-AuditPath` or `-ChecksPath`. If both are supplied, the audit file takes precedence.
 
 Export a reusable catalog and results:
 
 ```powershell
-.\Invoke-NessusAudit.ps1 -AuditPath C:\Audits\benchmark.audit -ExportChecksPath .\benchmark_checks.csv -OutputPath .\results.csv
+.\Invoke-AuditRunner.ps1 -AuditPath C:\Audits\benchmark.audit -ExportChecksPath .\benchmark_checks.csv -OutputPath .\results.csv
 ```
 
 Run the catalog later:
 
 ```powershell
-.\Invoke-NessusAudit.ps1 -ChecksPath .\benchmark_checks.csv -OutputPath .\results.csv
+.\Invoke-AuditRunner.ps1 -ChecksPath .\benchmark_checks.csv -OutputPath .\results.csv
 ```
+
+### HTML report
+
+Add `-HtmlPath` to write a self-contained offline HTML report alongside the CSV. It needs no network: styles, charts (pass/fail/manual donut, results-by-area bar) and the All/Pass/Fail/Manual + search filter are all inline. Each check gets a `finding-N` anchor with a table of contents, a details table, and a print-friendly layout.
+
+```powershell
+.\Invoke-AuditRunner.ps1 -AuditPath C:\Audits\benchmark.audit -OutputPath .\results.csv -HtmlPath .\report.html
+.\Invoke-AuditRunner.ps1 -AuditPath C:\Audits\benchmark.audit -OutputPath .\results.csv -HtmlPath .\report.html -CompanyName 'Example Co' -ClientName 'Client X' -AssessorName 'J. Smith' -ReportTitle 'Hardening Review' -LogoPath .\logo.png
+```
+
+The CLI wrapper accepts the same flags (`-HtmlPath`, `-CompanyName`, `-ClientName`, `-AssessorName`, `-ReportTitle`, `-LogoPath`) and prints the report path in its final summary.
 
 The legacy entrypoint remains available:
 
 ```powershell
-.\Invoke-CISWindows11Audit.ps1 -AuditPath C:\Audits\benchmark.audit
+.\Invoke-AuditRunnerLegacy.ps1 -AuditPath C:\Audits\benchmark.audit
 ```
 
-It forwards audit/checks and output paths to the main runner. Use `Invoke-NessusAudit.ps1` for catalog export or embedded-script options.
+It forwards audit/checks and output paths to the main runner. Use `Invoke-AuditRunner.ps1` for catalog export or embedded-script options.
 
 ### Linux / Unix
 
@@ -149,11 +163,11 @@ It forwards audit/checks and output paths to the main runner. Use `Invoke-Nessus
 Embedded execution is disabled by default. Review the input before enabling it: embedded code runs with your account's permissions and may change the system or access the network.
 
 ```powershell
-.\Invoke-NessusAudit.ps1 -AuditPath C:\Audits\trusted.audit -AllowEmbeddedScripts
+.\Invoke-AuditRunner.ps1 -AuditPath C:\Audits\trusted.audit -AllowEmbeddedScripts
 ```
 
 ```sh
-sh ./invoke-nessus-audit.sh /path/to/trusted.audit --allow-command-exec
+sh ./audit-runner.sh /path/to/trusted.audit --allow-command-exec
 ```
 
 ## Data handling
@@ -167,17 +181,17 @@ The repository ignores `.audit` files and the default catalog/result filename pa
 Run the existing regression checks from the repository root:
 
 ```powershell
-.\tests\Invoke-NessusAudit.Regression.ps1
+.\tests\Invoke-AuditRunner.Regression.ps1
 ```
 
 The suite checks Windows parser and comparison behaviour, including AND/OR expressions, user-right principal normalisation and service-policy mapping. It loads functions without running a host audit. It does not validate a complete benchmark or the Unix runner.
 
 | File | Responsibility |
 | --- | --- |
-| [Invoke-NessusAudit.ps1](Invoke-NessusAudit.ps1) | Windows parser, check evaluation and CSV export |
-| [invoke-nessus-audit.sh](invoke-nessus-audit.sh) | Linux/Unix parser, check evaluation and CSV export |
-| [Invoke-CISWindows11Audit.ps1](Invoke-CISWindows11Audit.ps1) | Compatibility entrypoint |
-| [tests/Invoke-NessusAudit.Regression.ps1](tests/Invoke-NessusAudit.Regression.ps1) | PowerShell regression checks |
+| [Invoke-AuditRunner.ps1](Invoke-AuditRunner.ps1) | Windows parser, check evaluation and CSV export |
+| [audit-runner.sh](audit-runner.sh) | Linux/Unix parser, check evaluation and CSV export |
+| [Invoke-AuditRunnerLegacy.ps1](Invoke-AuditRunnerLegacy.ps1) | Compatibility entrypoint |
+| [tests/Invoke-AuditRunner.Regression.ps1](tests/Invoke-AuditRunner.Regression.ps1) | PowerShell regression checks |
 
 [Report a bug or request a mapping](https://github.com/EthanChamps/local-audit-runner/issues) with the operating system, runner, sanitised audit item and expected versus actual result. Share only input excerpts you are permitted to redistribute.
 

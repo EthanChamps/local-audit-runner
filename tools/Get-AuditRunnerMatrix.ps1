@@ -1,10 +1,10 @@
 <#
 .SYNOPSIS
-    Support-matrix extractor / drift detector for the two Nessus audit runners.
+    Support-matrix extractor / drift detector for the two AuditRunner audit runners.
 
 .DESCRIPTION
-    The Windows runner (Invoke-NessusAudit.ps1, function Convert-AuditFieldsToCheck)
-    and the Unix runner (invoke-nessus-audit.sh, function emit()) are independent
+    The Windows runner (Invoke-AuditRunner.ps1, function Convert-AuditFieldsToCheck)
+    and the Unix runner (audit-runner.sh, function emit()) are independent
     implementations that share one CSV format. Each one only understands a fixed
     set of Nessus audit item types / match patterns; everything else falls back
     to Manual.
@@ -45,8 +45,8 @@ function Exit-Drift {
 }
 
 $repoRoot = Split-Path -Parent (Get-MatrixScriptDirectory)
-$windowsPath = Join-Path $repoRoot 'Invoke-NessusAudit.ps1'
-$unixPath = Join-Path $repoRoot 'invoke-nessus-audit.sh'
+$windowsPath = Join-Path $repoRoot 'Invoke-AuditRunner.ps1'
+$unixPath = Join-Path $repoRoot 'audit-runner.sh'
 
 if (-not (Test-Path -LiteralPath $windowsPath)) {
     Exit-Drift "Windows runner not found at $windowsPath."
@@ -152,12 +152,12 @@ foreach ($m in [regex]::Matches($converterBody, '\$sourceType\s+-in\s+@\(([^)]*)
 $foundWindowsTypes = @($foundWindowsTypes | Sort-Object -Unique)
 foreach ($t in $foundWindowsTypes) {
     if ($knownWindowsTypes -notcontains $t) {
-        Exit-Drift "Windows runner matches sourceType '$t' which is not in the support matrix; update tools/Get-SupportMatrix.ps1."
+        Exit-Drift "Windows runner matches sourceType '$t' which is not in the support matrix; update tools/Get-AuditRunnerMatrix.ps1."
     }
 }
 foreach ($t in $knownWindowsTypes) {
     if ($foundWindowsTypes -notcontains $t) {
-        Exit-Drift "Windows matrix entry '$t' is no longer matched in Convert-AuditFieldsToCheck; update tools/Get-SupportMatrix.ps1."
+        Exit-Drift "Windows matrix entry '$t' is no longer matched in Convert-AuditFieldsToCheck; update tools/Get-AuditRunnerMatrix.ps1."
     }
 }
 
@@ -174,22 +174,22 @@ foreach ($m in [regex]::Matches($unixSource, 'typ\s*~\s*/([^/]+)/')) {
 $foundUnixRegexes = @($foundUnixRegexes | Sort-Object -Unique)
 foreach ($t in $foundUnixEquals) {
     if ($knownUnixEquals -notcontains $t) {
-        Exit-Drift "Unix runner matches type '$t' which is not in the support matrix; update tools/Get-SupportMatrix.ps1."
+        Exit-Drift "Unix runner matches type '$t' which is not in the support matrix; update tools/Get-AuditRunnerMatrix.ps1."
     }
 }
 foreach ($t in $knownUnixEquals) {
     if ($foundUnixEquals -notcontains $t) {
-        Exit-Drift "Unix matrix entry '$t' is no longer matched in emit(); update tools/Get-SupportMatrix.ps1."
+        Exit-Drift "Unix matrix entry '$t' is no longer matched in emit(); update tools/Get-AuditRunnerMatrix.ps1."
     }
 }
 foreach ($t in $foundUnixRegexes) {
     if ($knownUnixRegexes -notcontains $t) {
-        Exit-Drift "Unix runner matches pattern '/$t/' which is not in the support matrix; update tools/Get-SupportMatrix.ps1."
+        Exit-Drift "Unix runner matches pattern '/$t/' which is not in the support matrix; update tools/Get-AuditRunnerMatrix.ps1."
     }
 }
 foreach ($t in $knownUnixRegexes) {
     if ($foundUnixRegexes -notcontains $t) {
-        Exit-Drift "Unix matrix entry '/$t/' is no longer matched in emit(); update tools/Get-SupportMatrix.ps1."
+        Exit-Drift "Unix matrix entry '/$t/' is no longer matched in emit(); update tools/Get-AuditRunnerMatrix.ps1."
     }
 }
 

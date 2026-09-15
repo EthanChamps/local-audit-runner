@@ -3,7 +3,7 @@ set -u
 
 usage() {
   cat <<'EOF'
-Usage: ./invoke-nessus-audit.sh AUDIT_FILE [-o output.csv] [--allow-command-exec]
+Usage: ./audit-runner.sh AUDIT_FILE [-o output.csv] [--allow-command-exec]
 
 Runs locally supported Nessus .audit checks on Linux/Unix hosts and writes:
 CHECK, Actual Value, Expected Value, Pass/Fail/Manual

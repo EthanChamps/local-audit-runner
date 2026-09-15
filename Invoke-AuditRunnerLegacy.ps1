@@ -5,7 +5,7 @@ param(
     [string]$OutputPath = ''
 )
 
-$runner = Join-Path $PSScriptRoot 'Invoke-NessusAudit.ps1'
+$runner = Join-Path $PSScriptRoot 'Invoke-AuditRunner.ps1'
 $params = @{}
 if (-not [string]::IsNullOrWhiteSpace($AuditPath)) {
     $params.AuditPath = $AuditPath

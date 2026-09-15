@@ -1,6 +1,6 @@
 $ErrorActionPreference = 'Stop'
 
-$runnerPath = Join-Path (Split-Path $PSScriptRoot -Parent) 'Invoke-NessusAudit.ps1'
+$runnerPath = Join-Path (Split-Path $PSScriptRoot -Parent) 'Invoke-AuditRunner.ps1'
 $source = Get-Content -LiteralPath $runnerPath -Raw
 $tokens = $null
 $parseErrors = $null
@@ -182,4 +182,4 @@ Assert-True (-not (Test-ChecklistExcluded (New-ChecklistProbe -ChecklistValue '0
 Assert-True (-not (Test-ChecklistExcluded (New-ChecklistProbe -ChecklistValue ''))) 'Empty Checklist must evaluate.'
 Assert-True (-not (Test-ChecklistExcluded (New-ChecklistProbe -OmitColumn))) 'Missing Checklist column must evaluate.'
 
-Write-Output 'All Invoke-NessusAudit regression tests passed.'
+Write-Output 'All Invoke-AuditRunner regression tests passed.'

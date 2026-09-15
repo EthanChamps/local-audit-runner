@@ -1,6 +1,6 @@
 $ErrorActionPreference = 'Stop'
 
-$runnerPath = Join-Path (Split-Path $PSScriptRoot -Parent) 'Invoke-NessusAudit.ps1'
+$runnerPath = Join-Path (Split-Path $PSScriptRoot -Parent) 'Invoke-AuditRunner.ps1'
 $source = Get-Content -LiteralPath $runnerPath -Raw
 $tokens = $null
 $parseErrors = $null
@@ -97,4 +97,4 @@ Assert-Equal $combined.Operator 'AllMatch' 'Combined condition must use AllMatch
 Assert-Equal $combined.SourceType 'IF_CONDITION' 'Combined condition source type mismatch.'
 Assert-Equal $combined.Title 'Example combined condition' 'Combined condition title mismatch.'
 
-Write-Output "All Invoke-NessusAudit golden tests passed ($($rows.Count) rows, $($manualRows.Count) Manual)."
+Write-Output "All Invoke-AuditRunner golden tests passed ($($rows.Count) rows, $($manualRows.Count) Manual)."
