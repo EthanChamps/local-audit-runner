@@ -1,5 +1,7 @@
 # Nessus audit inputs and exported catalogs/results stay outside this tools repo.
+# Synthetic parser fixtures are the exception and must stay committed.
 *.audit
+!tests/fixtures/*.audit
 *.aduit
 *.nessus
 *_checks.csv

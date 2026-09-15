@@ -1,0 +1,116 @@
+# Synthetic coverage audit for Invoke-NessusAudit golden tests. Not real guidance.
+<variable>
+<name>EXAMPLE_VALUE</name>
+<default>ExampleDefault</default>
+</variable>
+<custom_item>
+type : REGISTRY_SETTING
+description : "1.1 Example registry setting"
+reg_key : "HKLM\Software\Example"
+reg_item : "ExampleValue"
+value_type : "POLICY_DWORD"
+value_data : "@EXAMPLE_VALUE@"
+</custom_item>
+<custom_item>
+type : GUID_REGISTRY_SETTING
+description : "1.2 Example guid registry setting"
+reg_key : "HKLM\Software\Example\Providers\{GUID}\Settings"
+reg_item : "ExampleValue"
+guid_reg_key : "HKLM\Software\Example\Providers"
+value_data : "1"
+</custom_item>
+<custom_item>
+type : BANNER_CHECK
+description : "1.3 Example banner check"
+reg_key : "HKLM\Software\Example"
+reg_item : "ExampleBanner"
+value_data : "Example"
+</custom_item>
+<custom_item>
+type : REG_CHECK
+description : "1.4 Example reg check"
+value_data : "HKLM\Software\Example"
+key_item : "ExampleValue"
+</custom_item>
+<custom_item>
+type : PASSWORD_POLICY
+description : "2.1 Example password policy"
+password_policy : "MINIMUM_PASSWORD_LENGTH"
+value_data : "14"
+</custom_item>
+<custom_item>
+type : LOCKOUT_POLICY
+description : "2.2 Example lockout policy"
+lockout_policy : "LOCKOUT_THRESHOLD"
+value_data : "5"
+</custom_item>
+<custom_item>
+type : USER_RIGHTS_POLICY
+description : "3.1 Example user right"
+right_type : "SeExampleRight"
+value_data : "Example Principal A || Example Principal B"
+</custom_item>
+<custom_item>
+type : AUDIT_POLICY_SUBCATEGORY
+description : "4.1 Example audit policy"
+audit_policy_subcategory : "Example Subcategory"
+value_data : "Success"
+</custom_item>
+<custom_item>
+type : CHECK_ACCOUNT
+description : "5.1 Example account check"
+account_type : "Guest"
+value_data : "Disabled"
+</custom_item>
+<custom_item>
+type : SERVICE_POLICY
+description : "5.2 Example service policy"
+service_name : "ExampleService"
+value_data : "Disabled"
+</custom_item>
+<custom_item>
+type : AUDIT_POWERSHELL
+description : "6.1 Example powershell check"
+powershell_args : "Get-Example"
+value_data : "Example"
+</custom_item>
+<custom_item>
+type : FOO_NEW_TYPE_1
+description : "7.1 Example unknown type one"
+value_data : "Example"
+</custom_item>
+<custom_item>
+type : FOO_NEW_TYPE_2
+description : "7.2 Example unknown type two"
+value_data : "Example"
+</custom_item>
+<custom_item>
+type : REGISTRY_SETTING
+description : "Windows 11 is installed"
+reg_key : "HKLM\Software\Example"
+reg_item : "ExampleValue"
+value_data : "1"
+</custom_item>
+<if>
+<condition>
+<custom_item>
+type : REGISTRY_SETTING
+description : "Example condition item one"
+reg_key : "HKLM\Software\ExampleOne"
+reg_item : "ExampleValueOne"
+value_data : "1"
+</custom_item>
+<custom_item>
+type : REGISTRY_SETTING
+description : "Example condition item two"
+reg_key : "HKLM\Software\ExampleTwo"
+reg_item : "ExampleValueTwo"
+value_data : "1"
+</custom_item>
+</condition>
+<then>
+<report>
+description : "9.9 Example combined condition"
+</report>
+</then>
+</if>
