@@ -4,7 +4,13 @@ param(
     [string]$ChecksPath = '',
     [string]$OutputPath = '',
     [string]$ExportChecksPath = '',
-    [switch]$AllowEmbeddedScripts
+    [switch]$AllowEmbeddedScripts,
+    [string]$HtmlPath = '',
+    [string]$CompanyName = '',
+    [string]$ClientName = '',
+    [string]$AssessorName = '',
+    [string]$ReportTitle = '',
+    [string]$LogoPath = ''
 )
 
 Set-StrictMode -Version Latest
@@ -1294,6 +1300,349 @@ function Invoke-NessusCheck {
     }
 }
 
+function ConvertTo-HtmlEscaped {
+    param($Value)
+    if ($null -eq $Value) { return '' }
+    $text = [string]$Value
+    try {
+        return [System.Net.WebUtility]::HtmlEncode($text)
+    } catch {
+        $safe = $text -replace '&', '&amp;'
+        $safe = $safe -replace '<', '&lt;'
+        $safe = $safe -replace '>', '&gt;'
+        $safe = $safe -replace '"', '&quot;'
+        return $safe
+    }
+}
+
+function Get-AuditReportArea {
+    param([string]$CheckName)
+    if ([string]::IsNullOrWhiteSpace($CheckName)) { return 'Other' }
+    $trimmed = $CheckName.Trim()
+    $match = [regex]::Match($trimmed, '^(\d+)')
+    if ($match.Success) { return ('Section ' + $match.Groups[1].Value) }
+    return 'Other'
+}
+
+function ConvertTo-LogoDataUri {
+    param([string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path)) { return '' }
+    if (-not (Test-Path -LiteralPath $Path)) { return '' }
+    try {
+        $bytes = [System.IO.File]::ReadAllBytes($Path)
+    } catch {
+        return ''
+    }
+    if ($null -eq $bytes -or $bytes.Length -eq 0) { return '' }
+    if ($bytes.Length -gt 524288) { return '' }
+    $ext = [System.IO.Path]::GetExtension($Path).ToLowerInvariant()
+    $mime = ''
+    if ($ext -eq '.png') { $mime = 'image/png' }
+    elseif ($ext -eq '.jpg' -or $ext -eq '.jpeg') { $mime = 'image/jpeg' }
+    elseif ($ext -eq '.gif') { $mime = 'image/gif' }
+    elseif ($ext -eq '.svg') { $mime = 'image/svg+xml' }
+    else { return '' }
+    return ('data:' + $mime + ';base64,' + [Convert]::ToBase64String($bytes))
+}
+
+function Export-AuditHtmlReport {
+    param(
+        [array]$Results,
+        [Parameter(Mandatory)][string]$Path,
+        [string]$Title = '',
+        [string]$Company = '',
+        [string]$Client = '',
+        [string]$Assessor = '',
+        [string]$InputLabel = '',
+        [string]$LogoFile = ''
+    )
+
+    $rows = @()
+    if ($null -ne $Results) { $rows = @($Results) }
+    $passCount = 0
+    $failCount = 0
+    $manualCount = 0
+    foreach ($row in $rows) {
+        $status = ''
+        if ($null -ne $row) {
+            $prop = $row.PSObject.Properties['Pass/Fail/Manual']
+            if ($null -ne $prop) { $status = [string]$prop.Value }
+        }
+        $clean = $status.Trim()
+        if ([string]::Equals($clean, 'Pass', [System.StringComparison]::OrdinalIgnoreCase)) { $passCount++ }
+        elseif ([string]::Equals($clean, 'Fail', [System.StringComparison]::OrdinalIgnoreCase)) { $failCount++ }
+        else { $manualCount++ }
+    }
+    $totalCount = $rows.Count
+    $passRate = 0
+    if ($totalCount -gt 0) { $passRate = [math]::Round(($passCount * 100.0) / $totalCount) }
+
+    $reportTitle = $Title.Trim()
+    if ([string]::IsNullOrWhiteSpace($reportTitle)) { $reportTitle = 'Audit Results Report' }
+    $runDate = (Get-Date -Format 'yyyy-MM-dd HH:mm')
+    $hostName = ''
+    try { $hostName = [System.Net.Dns]::GetHostName() } catch { $hostName = '' }
+    if ([string]::IsNullOrWhiteSpace($hostName) -and $null -ne $env:COMPUTERNAME) { $hostName = [string]$env:COMPUTERNAME }
+    if ([string]::IsNullOrWhiteSpace($hostName) -and $null -ne $env:HOSTNAME) { $hostName = [string]$env:HOSTNAME }
+    if ([string]::IsNullOrWhiteSpace($hostName)) { $hostName = 'Local host' }
+
+    $areas = @{}
+    foreach ($row in $rows) {
+        $name = ''
+        if ($null -ne $row) {
+            $p = $row.PSObject.Properties['CHECK']
+            if ($null -ne $p) { $name = [string]$p.Value }
+        }
+        $area = Get-AuditReportArea $name
+        if (-not $areas.ContainsKey($area)) { $areas[$area] = 0 }
+        $areas[$area] = [int]$areas[$area] + 1
+    }
+    $sortedAreas = @($areas.Keys | Sort-Object)
+    $maxArea = 1
+    foreach ($key in $sortedAreas) { if ([int]$areas[$key] -gt $maxArea) { $maxArea = [int]$areas[$key] } }
+
+    $radius = 54
+    $circ = 2 * [math]::PI * $radius
+    $passLen = 0
+    $failLen = 0
+    $manualLen = 0
+    if ($totalCount -gt 0) {
+        $passLen = [math]::Round(($passCount / [double]$totalCount) * $circ, 2)
+        $failLen = [math]::Round(($failCount / [double]$totalCount) * $circ, 2)
+        $manualLen = [math]::Round(($manualCount / [double]$totalCount) * $circ, 2)
+    }
+    $failOffset = (0 - $passLen)
+    $manualOffset = (0 - $passLen - $failLen)
+
+    $logoUri = ConvertTo-LogoDataUri $LogoFile
+    $hasLogo = -not [string]::IsNullOrWhiteSpace($logoUri)
+
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.AppendLine('<!DOCTYPE html>')
+    [void]$sb.AppendLine('<html lang="en">')
+    [void]$sb.AppendLine('<head>')
+    [void]$sb.AppendLine('<meta charset="utf-8">')
+    [void]$sb.AppendLine('<meta name="viewport" content="width=device-width, initial-scale=1">')
+    [void]$sb.AppendLine(('<title>' + (ConvertTo-HtmlEscaped $reportTitle) + '</title>'))
+    [void]$sb.AppendLine('<style>')
+    [void]$sb.AppendLine(':root{--ink:#1f2937;--muted:#6b7280;--line:#e5e7eb;--bg:#f8fafc;--card:#ffffff;--pass:#16803d;--pass-bg:#e7f4ec;--fail:#b3261e;--fail-bg:#fdecea;--manual:#8a6d00;--manual-bg:#fef6d8;--accent:#1d4ed8;}')
+    [void]$sb.AppendLine('*{box-sizing:border-box;}body{margin:0;font-family:Georgia,"Times New Roman",Verdana,system-ui,sans-serif;color:var(--ink);background:var(--bg);line-height:1.55;}')
+    [void]$sb.AppendLine('.wrap{max-width:1024px;margin:0 auto;padding:24px 20px 64px;}header.report{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:24px;}')
+    [void]$sb.AppendLine('.brand-row{display:flex;gap:16px;align-items:center;}.logo{height:52px;width:auto;max-width:220px;object-fit:contain;border:1px solid var(--line);border-radius:8px;background:#fff;}')
+    [void]$sb.AppendLine('h1{font-size:28px;margin:6px 0;}h2{font-size:20px;margin:32px 0 12px;}h3{font-size:16px;margin:20px 0 8px;}')
+    [void]$sb.AppendLine('.meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px 20px;margin-top:14px;font-size:14px;}')
+    [void]$sb.AppendLine('.meta dt{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.04em;}.meta dd{margin:0;font-weight:600;}')
+    [void]$sb.AppendLine('.grid{display:grid;grid-template-columns:300px 1fr;gap:20px;margin-top:20px;}@media(max-width:760px){.grid{grid-template-columns:1fr;}}')
+    [void]$sb.AppendLine('.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:20px;}')
+    [void]$sb.AppendLine('.stat-row{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;}.stat{flex:1;min-width:110px;border:1px solid var(--line);border-radius:10px;padding:10px;text-align:center;}.stat b{display:block;font-size:24px;}')
+    [void]$sb.AppendLine('.badge{display:inline-block;padding:2px 10px;border-radius:999px;font-size:12px;font-weight:700;letter-spacing:.03em;}')
+    [void]$sb.AppendLine('.badge.pass{background:var(--pass-bg);color:var(--pass);border:1px solid var(--pass);}.badge.fail{background:var(--fail-bg);color:var(--fail);border:1px solid var(--fail);}.badge.manual{background:var(--manual-bg);color:var(--manual);border:1px solid var(--manual);}')
+    [void]$sb.AppendLine('.toolbar{position:sticky;top:0;background:var(--bg);padding:12px 0;display:flex;gap:8px;flex-wrap:wrap;align-items:center;z-index:5;}')
+    [void]$sb.AppendLine('.toolbar button{border:1px solid var(--line);background:#fff;border-radius:999px;padding:6px 14px;cursor:pointer;font-size:14px;}')
+    [void]$sb.AppendLine('.toolbar button.active{background:var(--ink);color:#fff;border-color:var(--ink);}')
+    [void]$sb.AppendLine('.toolbar input{flex:1;min-width:180px;border:1px solid var(--line);border-radius:999px;padding:7px 14px;font-size:14px;}')
+    [void]$sb.AppendLine('.toc{columns:2;column-gap:24px;font-size:14px;}@media(max-width:760px){.toc{columns:1;}}.toc a{color:var(--accent);text-decoration:none;}.toc li{margin:3px 0;break-inside:avoid;}')
+    [void]$sb.AppendLine('.finding{border:1px solid var(--line);border-left-width:6px;border-radius:10px;background:#fff;padding:14px 16px;margin:12px 0;}')
+    [void]$sb.AppendLine('.finding.pass{border-left-color:var(--pass);}.finding.fail{border-left-color:var(--fail);}.finding.manual{border-left-color:var(--manual);}')
+    [void]$sb.AppendLine('.finding h3{margin:0 0 6px;font-size:15px;}.kv{font-size:14px;margin:4px 0;}.kv span{color:var(--muted);}.backtop{font-size:13px;}')
+    [void]$sb.AppendLine('table.details{width:100%;border-collapse:collapse;font-size:14px;background:#fff;}table.details th,table.details td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top;}table.details th{background:#f1f5f9;}')
+    [void]$sb.AppendLine('.table-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:12px;}footer{margin-top:32px;font-size:13px;color:var(--muted);}')
+    [void]$sb.AppendLine('@media print{.toolbar{display:none;}.wrap{max-width:none;padding:0;}header.report,.card,.finding{break-inside:avoid;}body{background:#fff;}a{color:#000;}}')
+    [void]$sb.AppendLine('</style>')
+    [void]$sb.AppendLine('</head>')
+    [void]$sb.AppendLine('<body id="top">')
+    [void]$sb.AppendLine('<div class="wrap">')
+    [void]$sb.AppendLine('<header class="report">')
+    [void]$sb.AppendLine('<div class="brand-row">')
+    if ($hasLogo) {
+        [void]$sb.AppendLine(('<img class="logo" alt="Company logo" src="' + $logoUri + '">'))
+    }
+    [void]$sb.AppendLine('<div>')
+    [void]$sb.AppendLine(('<div style="color:var(--muted);font-size:13px;">' + (ConvertTo-HtmlEscaped $Company) + '</div>'))
+    [void]$sb.AppendLine(('<h1>' + (ConvertTo-HtmlEscaped $reportTitle) + '</h1>'))
+    [void]$sb.AppendLine('</div>')
+    [void]$sb.AppendLine('</div>')
+    [void]$sb.AppendLine('<dl class="meta">')
+    [void]$sb.AppendLine(('<div><dt>Client</dt><dd>' + (ConvertTo-HtmlEscaped $Client) + '</dd></div>'))
+    [void]$sb.AppendLine(('<div><dt>Assessor</dt><dd>' + (ConvertTo-HtmlEscaped $Assessor) + '</dd></div>'))
+    [void]$sb.AppendLine(('<div><dt>Date</dt><dd>' + (ConvertTo-HtmlEscaped $runDate) + '</dd></div>'))
+    [void]$sb.AppendLine(('<div><dt>Host</dt><dd>' + (ConvertTo-HtmlEscaped $hostName) + '</dd></div>'))
+    [void]$sb.AppendLine(('<div><dt>Input file</dt><dd>' + (ConvertTo-HtmlEscaped $InputLabel) + '</dd></div>'))
+    [void]$sb.AppendLine('<div><dt>Tool</dt><dd>AuditRunner local runner (partial Nessus-format support)</dd></div>')
+    [void]$sb.AppendLine('</dl>')
+    [void]$sb.AppendLine('</header>')
+
+    [void]$sb.AppendLine('<div class="grid">')
+    [void]$sb.AppendLine('<section class="card">')
+    [void]$sb.AppendLine('<h2 style="margin-top:0;">Executive summary</h2>')
+    [void]$sb.AppendLine(('<p><strong>' + $passCount + ' of ' + $totalCount + ' checks passed (' + $passRate + '% pass rate).</strong></p>'))
+    [void]$sb.AppendLine(('<svg role="img" aria-label="Results: ' + $passCount + ' pass, ' + $failCount + ' fail, ' + $manualCount + ' manual" viewBox="0 0 140 140" width="220" height="220">'))
+    [void]$sb.AppendLine('<circle cx="70" cy="70" r="54" fill="none" stroke="#e5e7eb" stroke-width="18"/>')
+    if ($totalCount -gt 0) {
+        if ($passLen -gt 0) {
+            [void]$sb.AppendLine(('<circle cx="70" cy="70" r="54" fill="none" stroke="#16803d" stroke-width="18" stroke-dasharray="' + $passLen + ' ' + ($circ - $passLen) + '" stroke-dashoffset="0" transform="rotate(-90 70 70)"/>'))
+        }
+        if ($failLen -gt 0) {
+            [void]$sb.AppendLine(('<circle cx="70" cy="70" r="54" fill="none" stroke="#b3261e" stroke-width="18" stroke-dasharray="' + $failLen + ' ' + ($circ - $failLen) + '" stroke-dashoffset="' + $failOffset + '" transform="rotate(-90 70 70)"/>'))
+        }
+        if ($manualLen -gt 0) {
+            [void]$sb.AppendLine(('<circle cx="70" cy="70" r="54" fill="none" stroke="#d9a400" stroke-width="18" stroke-dasharray="' + $manualLen + ' ' + ($circ - $manualLen) + '" stroke-dashoffset="' + $manualOffset + '" transform="rotate(-90 70 70)"/>'))
+        }
+    }
+    [void]$sb.AppendLine(('<text x="70" y="66" text-anchor="middle" font-size="22" font-weight="bold">' + $passRate + '%</text>'))
+    [void]$sb.AppendLine(('<text x="70" y="86" text-anchor="middle" font-size="11" fill="#6b7280">' + $passCount + ' / ' + $totalCount + ' passed</text>'))
+    [void]$sb.AppendLine('</svg>')
+    [void]$sb.AppendLine('<div class="stat-row">')
+    [void]$sb.AppendLine(('<div class="stat"><b style="color:var(--pass);">' + $passCount + '</b>Pass</div>'))
+    [void]$sb.AppendLine(('<div class="stat"><b style="color:var(--fail);">' + $failCount + '</b>Fail</div>'))
+    [void]$sb.AppendLine(('<div class="stat"><b style="color:var(--manual);">' + $manualCount + '</b>Manual</div>'))
+    [void]$sb.AppendLine('</div>')
+    [void]$sb.AppendLine('</section>')
+
+    [void]$sb.AppendLine('<section class="card">')
+    [void]$sb.AppendLine('<h2 style="margin-top:0;">Results by area</h2>')
+    [void]$sb.AppendLine('<p style="color:var(--muted);font-size:14px;">Grouped by the leading number of each check name.</p>')
+    if ($sortedAreas.Count -eq 0) {
+        [void]$sb.AppendLine('<p>No checks were evaluated.</p>')
+    } else {
+        $barHeight = 22
+        $gap = 10
+        $svgHeight = ($sortedAreas.Count * ($barHeight + $gap)) + 10
+        $barMax = 480
+        [void]$sb.AppendLine(('<svg role="img" aria-label="Checks per area" viewBox="0 0 640 ' + $svgHeight + '" width="100%">'))
+        $y = 5
+        foreach ($key in $sortedAreas) {
+            $count = [int]$areas[$key]
+            $width = [math]::Round(($count / [double]$maxArea) * $barMax)
+            if ($width -lt 4) { $width = 4 }
+            [void]$sb.AppendLine(('<text x="0" y="' + ($y + 15) + '" font-size="12">' + (ConvertTo-HtmlEscaped $key) + ' (' + $count + ')</text>'))
+            [void]$sb.AppendLine(('<rect x="140" y="' + $y + '" width="' + $width + '" height="' + $barHeight + '" rx="6" fill="#1d4ed8"><title>' + (ConvertTo-HtmlEscaped $key) + ': ' + $count + ' checks</title></rect>'))
+            $y = $y + $barHeight + $gap
+        }
+        [void]$sb.AppendLine('</svg>')
+    }
+    [void]$sb.AppendLine('</section>')
+    [void]$sb.AppendLine('</div>')
+
+    [void]$sb.AppendLine('<section class="card" style="margin-top:20px;">')
+    [void]$sb.AppendLine('<h2 style="margin-top:0;">Contents</h2>')
+    [void]$sb.AppendLine('<ol class="toc">')
+    $n = 0
+    foreach ($row in $rows) {
+        $n++
+        $name = ''
+        $status = 'Manual'
+        if ($null -ne $row) {
+            $p1 = $row.PSObject.Properties['CHECK']
+            if ($null -ne $p1) { $name = [string]$p1.Value }
+            $p2 = $row.PSObject.Properties['Pass/Fail/Manual']
+            if ($null -ne $p2) { $status = ([string]$p2.Value).Trim() }
+        }
+        if ([string]::Equals($status, 'Pass', [System.StringComparison]::OrdinalIgnoreCase)) { $cls = 'pass' }
+        elseif ([string]::Equals($status, 'Fail', [System.StringComparison]::OrdinalIgnoreCase)) { $cls = 'fail' }
+        else { $cls = 'manual'; $status = 'Manual' }
+        [void]$sb.AppendLine(('<li><span class="badge ' + $cls + '">' + (ConvertTo-HtmlEscaped $status) + '</span> <a href="#finding-' + $n + '">' + (ConvertTo-HtmlEscaped $name) + '</a></li>'))
+    }
+    [void]$sb.AppendLine('</ol>')
+    [void]$sb.AppendLine('</section>')
+
+    [void]$sb.AppendLine('<div class="toolbar" role="search">')
+    [void]$sb.AppendLine('<button type="button" data-filter="All" class="active">All</button>')
+    [void]$sb.AppendLine('<button type="button" data-filter="Pass">Pass</button>')
+    [void]$sb.AppendLine('<button type="button" data-filter="Fail">Fail</button>')
+    [void]$sb.AppendLine('<button type="button" data-filter="Manual">Manual</button>')
+    [void]$sb.AppendLine('<input id="finding-search" type="search" placeholder="Search checks, actual or expected values...">')
+    [void]$sb.AppendLine('</div>')
+
+    foreach ($group in @('Fail', 'Manual', 'Pass')) {
+        if ($group -eq 'Fail') { $groupLower = 'fail' }
+        elseif ($group -eq 'Manual') { $groupLower = 'manual' }
+        else { $groupLower = 'pass' }
+        [void]$sb.AppendLine(('<h2>' + $group + ' findings</h2>'))
+        $n = 0
+        $groupEmpty = $true
+        foreach ($row in $rows) {
+            $n++
+            $name = ''
+            $actual = ''
+            $expected = ''
+            $status = 'Manual'
+            if ($null -ne $row) {
+                $p1 = $row.PSObject.Properties['CHECK']
+                if ($null -ne $p1) { $name = [string]$p1.Value }
+                $p2 = $row.PSObject.Properties['Actual Value']
+                if ($null -ne $p2) { $actual = [string]$p2.Value }
+                $p3 = $row.PSObject.Properties['Expected Value']
+                if ($null -ne $p3) { $expected = [string]$p3.Value }
+                $p4 = $row.PSObject.Properties['Pass/Fail/Manual']
+                if ($null -ne $p4) { $status = ([string]$p4.Value).Trim() }
+            }
+            $norm = $status
+            if (-not ([string]::Equals($norm, 'Pass', [System.StringComparison]::OrdinalIgnoreCase) -or [string]::Equals($norm, 'Fail', [System.StringComparison]::OrdinalIgnoreCase))) { $norm = 'Manual' }
+            if (-not [string]::Equals($norm, $group, [System.StringComparison]::OrdinalIgnoreCase)) { continue }
+            $groupEmpty = $false
+            [void]$sb.AppendLine(('<article class="finding ' + $groupLower + '" id="finding-' + $n + '" data-status="' + $group + '">'))
+            [void]$sb.AppendLine(('<h3>' + (ConvertTo-HtmlEscaped $name) + '</h3>'))
+            [void]$sb.AppendLine(('<p><span class="badge ' + $groupLower + '">' + (ConvertTo-HtmlEscaped $norm) + '</span></p>'))
+            [void]$sb.AppendLine(('<p class="kv"><span>Actual:</span> ' + (ConvertTo-HtmlEscaped $actual) + '</p>'))
+            [void]$sb.AppendLine(('<p class="kv"><span>Expected:</span> ' + (ConvertTo-HtmlEscaped $expected) + '</p>'))
+            [void]$sb.AppendLine('<p class="backtop"><a href="#top">Back to top</a></p>')
+            [void]$sb.AppendLine('</article>')
+        }
+        if ($groupEmpty) {
+            [void]$sb.AppendLine(('<p class="finding ' + $groupLower + '" data-status="' + $group + '">No ' + $group.ToLowerInvariant() + ' findings.</p>'))
+        }
+    }
+
+    [void]$sb.AppendLine('<h2>Details table</h2>')
+    [void]$sb.AppendLine('<div class="table-wrap">')
+    [void]$sb.AppendLine('<table class="details" id="details-table">')
+    [void]$sb.AppendLine('<thead><tr><th>Check</th><th>Status</th><th>Actual</th><th>Expected</th></tr></thead>')
+    [void]$sb.AppendLine('<tbody>')
+    foreach ($row in $rows) {
+        $name = ''
+        $actual = ''
+        $expected = ''
+        $status = 'Manual'
+        if ($null -ne $row) {
+            $p1 = $row.PSObject.Properties['CHECK']
+            if ($null -ne $p1) { $name = [string]$p1.Value }
+            $p2 = $row.PSObject.Properties['Actual Value']
+            if ($null -ne $p2) { $actual = [string]$p2.Value }
+            $p3 = $row.PSObject.Properties['Expected Value']
+            if ($null -ne $p3) { $expected = [string]$p3.Value }
+            $p4 = $row.PSObject.Properties['Pass/Fail/Manual']
+            if ($null -ne $p4) { $status = ([string]$p4.Value).Trim() }
+        }
+        $norm = $status
+        if (-not ([string]::Equals($norm, 'Pass', [System.StringComparison]::OrdinalIgnoreCase) -or [string]::Equals($norm, 'Fail', [System.StringComparison]::OrdinalIgnoreCase))) { $norm = 'Manual' }
+        if ([string]::Equals($norm, 'Pass', [System.StringComparison]::OrdinalIgnoreCase)) { $cls = 'pass' }
+        elseif ([string]::Equals($norm, 'Fail', [System.StringComparison]::OrdinalIgnoreCase)) { $cls = 'fail' }
+        else { $cls = 'manual' }
+        [void]$sb.AppendLine(('<tr data-status="' + $norm + '"><td>' + (ConvertTo-HtmlEscaped $name) + '</td><td><span class="badge ' + $cls + '">' + (ConvertTo-HtmlEscaped $norm) + '</span></td><td>' + (ConvertTo-HtmlEscaped $actual) + '</td><td>' + (ConvertTo-HtmlEscaped $expected) + '</td></tr>'))
+    }
+    [void]$sb.AppendLine('</tbody>')
+    [void]$sb.AppendLine('</table>')
+    [void]$sb.AppendLine('</div>')
+
+    [void]$sb.AppendLine('<footer>')
+    [void]$sb.AppendLine('<p>Method note: this report was produced by a local runner with partial Nessus-format support. Unsupported or blocked checks are kept as Manual and need separate review. A finished run only means results were exported; completion is not a compliance verdict. Review each Fail and Manual row before signing off.</p>')
+    [void]$sb.AppendLine('</footer>')
+    [void]$sb.AppendLine('</div>')
+    [void]$sb.AppendLine('<script>')
+    [void]$sb.AppendLine('(function(){var current="All";var box=document.getElementById("finding-search");function matches(el){var st=el.getAttribute("data-status")||"";if(current!=="All"&&st!==current){return false;}var q=(box&&box.value||"").toLowerCase();if(!q){return true;}var text=(el.textContent||"").toLowerCase();return text.indexOf(q)>-1;}function apply(){var cards=document.querySelectorAll(".finding");for(var i=0;i<cards.length;i++){cards[i].style.display=matches(cards[i])?"":"none";}var rows=document.querySelectorAll("#details-table tbody tr");for(var j=0;j<rows.length;j++){rows[j].style.display=matches(rows[j])?"":"none";}}var buttons=document.querySelectorAll(".toolbar button");for(var k=0;k<buttons.length;k++){buttons[k].addEventListener("click",function(){current=this.getAttribute("data-filter");for(var m=0;m<buttons.length;m++){buttons[m].className=(buttons[m]===this)?"active":"";}apply();});}if(box){box.addEventListener("input",apply);}})();')
+    [void]$sb.AppendLine('</script>')
+    [void]$sb.AppendLine('</body>')
+    [void]$sb.AppendLine('</html>')
+
+    $parent = Split-Path -Parent $Path
+    if (-not [string]::IsNullOrWhiteSpace($parent) -and -not (Test-Path -LiteralPath $parent)) {
+        [void](New-Item -ItemType Directory -Force -Path $parent)
+    }
+    $html = $sb.ToString()
+    [System.IO.File]::WriteAllText($Path, $html, (New-Object System.Text.UTF8Encoding $false))
+}
+
 if ([string]::IsNullOrWhiteSpace($AuditPath) -and [string]::IsNullOrWhiteSpace($ChecksPath)) {
     throw 'Specify either -AuditPath for a Nessus .audit file or -ChecksPath for a checks catalog CSV.'
 }
@@ -1377,3 +1726,10 @@ $results = foreach ($check in $checks) {
 
 $results | Export-Csv -LiteralPath $OutputPath -NoTypeInformation -Encoding UTF8
 Write-Host "Wrote Nessus audit results to: $OutputPath"
+
+if (-not [string]::IsNullOrWhiteSpace($HtmlPath)) {
+    $htmlInputLabel = $AuditPath
+    if ([string]::IsNullOrWhiteSpace($htmlInputLabel)) { $htmlInputLabel = $ChecksPath }
+    Export-AuditHtmlReport -Results $results -Path $HtmlPath -Title $ReportTitle -Company $CompanyName -Client $ClientName -Assessor $AssessorName -InputLabel $htmlInputLabel -LogoFile $LogoPath
+    Write-Host "Wrote HTML report to: $HtmlPath"
+}

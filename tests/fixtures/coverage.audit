@@ -1,4 +1,4 @@
-# Synthetic coverage audit for Invoke-NessusAudit golden tests. Not real guidance.
+# Synthetic coverage audit for Invoke-AuditRunner golden tests. Not real guidance.
 <variable>
 <name>EXAMPLE_VALUE</name>
 <default>ExampleDefault</default>

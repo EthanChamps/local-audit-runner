@@ -4,31 +4,35 @@ Local Nessus `.audit` runners. Two independent implementations, one CSV format (
 
 ## Layout
 
-- `Invoke-NessusAudit.ps1` — main Windows runner (parser + evaluation + CSV export).
-- `invoke-nessus-audit.sh` — Linux/Unix runner, POSIX `sh` (not bash).
-- `Invoke-CISWindows11Audit.ps1` — legacy wrapper; forwards only `AuditPath`/`ChecksPath`/`OutputPath` to the main runner. No catalog-export or embedded-script flags. Prefer `Invoke-NessusAudit.ps1`.
-- `tests/Invoke-NessusAudit.Regression.ps1` — Windows parser/comparison checks. No Pester, no Unix-runner coverage.
-- `tests/Invoke-NessusAudit.Golden.ps1` + `tests/fixtures/coverage.audit` — synthetic parser golden test (14 rows, 2 Manual); only `.audit` file that stays committed.
-- `tools/Get-SupportMatrix.ps1` — prints supported type matrix for both runners; exits 2 on drift. Run after touching either runner.
+- `Invoke-AuditRunner.ps1` — main Windows runner (parser + evaluation + CSV export).
+- `audit-runner.sh` — Linux/Unix runner, POSIX `sh` (not bash).
+- `Invoke-AuditRunnerLegacy.ps1` — legacy wrapper (formerly `Invoke-CISWindows11Audit.ps1`); forwards only `AuditPath`/`ChecksPath`/`OutputPath` to the main runner. No catalog-export or embedded-script flags. Prefer `Invoke-AuditRunner.ps1`.
+- `Invoke-AuditRunnerCli.ps1` — offline wifit3-style CLI wrapper over the main runner.
+- `tests/Invoke-AuditRunner.Regression.ps1` — Windows parser/comparison checks. No Pester, no Unix-runner coverage.
+- `tests/Invoke-AuditRunner.Golden.ps1` + `tests/fixtures/coverage.audit` — synthetic parser golden test (14 rows, 2 Manual); only `.audit` file that stays committed.
+- `tools/Get-AuditRunnerMatrix.ps1` — prints supported type matrix for both runners; exits 2 on drift. Run after touching either runner.
 
 ## Commands
 
 ```powershell
 # Run an audit (output dir must already exist)
-.\Invoke-NessusAudit.ps1 -AuditPath C:\Audits\benchmark.audit -OutputPath .\results.csv
+.\Invoke-AuditRunner.ps1 -AuditPath C:\Audits\benchmark.audit -OutputPath .\results.csv
+# HTML report (offline, self-contained) with white-label branding
+.\Invoke-AuditRunner.ps1 -AuditPath C:\Audits\benchmark.audit -OutputPath .\results.csv -HtmlPath .\report.html -CompanyName 'Example Co' -ClientName 'Client X'
+.\Invoke-AuditRunner.ps1 -ChecksPath .\benchmark_checks.csv -OutputPath .\results.csv -HtmlPath .\report.html -ReportTitle 'Hardening Review' -AssessorName 'J. Smith' -LogoPath .\logo.png
 # Reusable catalog: export, then re-run without the .audit file
-.\Invoke-NessusAudit.ps1 -AuditPath C:\Audits\benchmark.audit -ExportChecksPath .\benchmark_checks.csv -OutputPath .\results.csv
-.\Invoke-NessusAudit.ps1 -ChecksPath .\benchmark_checks.csv -OutputPath .\results.csv
+.\Invoke-AuditRunner.ps1 -AuditPath C:\Audits\benchmark.audit -ExportChecksPath .\benchmark_checks.csv -OutputPath .\results.csv
+.\Invoke-AuditRunner.ps1 -ChecksPath .\benchmark_checks.csv -OutputPath .\results.csv
 # Regression (repo root, Windows PowerShell; dot-sources functions via AST, runs no host audit)
-.\tests\Invoke-NessusAudit.Regression.ps1
+.\tests\Invoke-AuditRunner.Regression.ps1
 # Parser golden test + support-matrix drift check (run both after touching either runner)
-.\tests\Invoke-NessusAudit.Golden.ps1
-.\tools\Get-SupportMatrix.ps1
+.\tests\Invoke-AuditRunner.Golden.ps1
+.\tools\Get-AuditRunnerMatrix.ps1
 ```
 
 ```sh
-sh ./invoke-nessus-audit.sh /path/to/benchmark.audit -o ./results.csv
-sh ./invoke-nessus-audit.sh /path/to/benchmark.audit --allow-command-exec
+sh ./audit-runner.sh /path/to/benchmark.audit -o ./results.csv
+sh ./audit-runner.sh /path/to/benchmark.audit --allow-command-exec
 ```
 
 No build, lint, typecheck, CI, or package manager. No `opencode.json`.
